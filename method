@@ -1,5 +1,7 @@
+import tensorflow as tf
+
 def ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3):
-  h1 = tf.nn.conv2d(x, weight1, strides = [1, s, s,1], padding = "SAME")
+  	h1 = tf.nn.conv2d(x, weight1, strides = [1, s, s,1], padding = "SAME")
 	h1_mean , h1_var= tf.nn.moments(h1, 0)
 	h1 = tf.nn.batch_normalization(h1, h1_mean, h1_var, _offset1, _scale1, variance_epsilon=0.001, name=None)
 	h1 = tf.nn.relu(h1)
@@ -14,7 +16,7 @@ def ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scal
 	return h3
 
 def IncreaseResNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3, weight):
-  r = ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3)
+  	r = ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3)
 	x = tf.nn.conv2d(x, weight, strides = [1,s,s,1], padding = "SAME")
 	return r+x
  
