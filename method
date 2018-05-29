@@ -1,94 +1,84 @@
 import tensorflow as tf
 
-def ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3):
-  	h1 = tf.nn.conv2d(x, weight1, strides = [1, s, s,1], padding = "SAME")
-	h1_mean , h1_var= tf.nn.moments(h1, 0)
-	h1 = tf.nn.batch_normalization(h1, h1_mean, h1_var, _offset1, _scale1, variance_epsilon=0.001, name=None)
-	h1 = tf.nn.relu(h1)
-	h2 = tf.nn.conv2d(h1, weight2, strides = [1, 1, 1,1], padding = "SAME")
-	h2_mean , h2_var= tf.nn.moments(h2, 0)
-	h2 = tf.nn.batch_normalization(h2, h2_mean, h2_var, _offset2, _scale2, variance_epsilon=0.001, name=None)
-	h2 = tf.nn.relu(h2)	
-	h3 = tf.nn.conv2d(h2, weight3, strides = [1, 1, 1,1], padding = "SAME")
-	h3_mean , h3_var= tf.nn.moments(h3, 0)
-	h3 = tf.nn.batch_normalization(h3, h3_mean, h3_var, _offset3, _scale3, variance_epsilon=0.001, name=None)
-	h3 = tf.nn.relu(h3)	
-	return h3
+all_node = 100352
+img_size = 224
+batch_size = 256
+output_size = 1
+input_data = tf.placeholder("float", [batch_size, img_size*img_size*3])
+label = ("float", [batch_size, output_size])
 
+def Cov(x, s, weight, _offset, _scale):
+	h = tf.nn.conv2d(x, weight, strides = [1, s, s,1], padding = "SAME")
+	h_mean , h_var= tf.nn.moments(h, 0)
+	h = tf.nn.batch_normalization(h, h_mean, h_var, _offset, _scale, variance_epsilon=0.001, name=None)
+	return tf.nn.relu(h)
+
+def ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3):
+	h1 = Cov(x, s, weight1, _offset1, _scale1)
+	s = 1
+	h2 = Cov(h1, s, weight2, _offset2, _scale2)
+	return Cov(h2, s, weight3, _offset3, _scale3)
+	
 def IncreaseResNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3, weight):
-  	r = ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3)
+	r = ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3)
 	x = tf.nn.conv2d(x, weight, strides = [1,s,s,1], padding = "SAME")
 	return r+x
- 
+
 def ResNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3):
 	r = ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3)
-	return r+x
-
-def model(x, weight, offsets, scales):
-	x = tf.reshape(x, [-1, img_size, img_size, 3])
-	c = tf.nn.conv2d(x, weights['cw'], strides = [1,2,2,1], padding = "SAME")
-	c1_mean , c1_var= tf.nn.moments(c, 0)
-	c = tf.nn.batch_normalization(c, c1_mean, c1_var, offsets['o'], scales['s'], variance_epsilon=0.001, name=None)
-	c = tf.nn.relu(c)
-	c = tf.nn.max_pool(c, ksize =[1,3,3,1], strides= [1,2,2,1], padding="SAME")
+	return r+x	
 	
-	s=1
-	c = IncreaseResNet(c, s, 
-	weights[weight_name[0]], weights[weight_name[1]], weights[weight_name[2]],
-	offsets[offset_name[0]], offsets[offset_name[1]], offsets[offset_name[2]],
-	scales[scall_name[0]], scales[scall_name[1]], scales[scall_name[2]], 	
-	weight = weight_re['w0'])
+def ConvBlock(x, s, i_index, f_index, index_re, weights, offsets, scales, weight_re):
+	c = IncreaseResNet(x, s, 
+	weights[i_index], weights[i_index+1], weights[i_index+2],
+	offsets[i_index], offsets[i_index+1], offsets[i_index+2],
+	scales[i_index], scales[i_index+1], scales[i_index+2], 	
+	weight = weight_re[index_re])	
 	
-	for index in range(3,9,3):
+	s = 1
+	for index in range(i_index+3,f_index,3):
 		c = ResNet(c, s,
-		weights[weight_name[index]], weights[weight_name[index+1]], weights[weight_name[index+2]],
-		offsets[offset_name[index]], offsets[offset_name[index+1]], offsets[offset_name[index+2]], 
-		scales[scall_name[index]], scales[scall_name[index+1]], scales[scall_name[index+2]])
-	
-	s=2	
-	c = IncreaseResNet(c, s, 
-	weights[weight_name[9]], weights[weight_name[10]], weights[weight_name[11]],
-	offsets[offset_name[9]], offsets[offset_name[10]], offsets[offset_name[11]], 
-	scales[scall_name[9]], scales[scall_name[10]], scales[scall_name[11]], 
-	weight = weight_re['w1'])
-    
-	s=1
-	for index in range(12,21,3):
-		c = ResNet(c, s, 
-		weights[weight_name[index]], weights[weight_name[index+1]], weights[weight_name[index+2]],
-		offsets[offset_name[index]], offsets[offset_name[index+1]], offsets[offset_name[index+2]], 
-		scales[scall_name[index]], scales[scall_name[index+1]], scales[scall_name[index+2]])
-	
-	s=2	
-	c = IncreaseResNet(c, s, 
-	weights[weight_name[21]], weights[weight_name[22]], weights[weight_name[23]],
-	offsets[offset_name[21]], offsets[offset_name[22]], offsets[offset_name[23]], 
-	scales[scall_name[21]], scales[scall_name[22]], scales[scall_name[23]], 
-	weight = weight_re['w2'])		
-	
-	s=1
-	for index in range(24,90,3):
-		c = ResNet(c, s, 
-		weights[weight_name[index]], weights[weight_name[index+1]], weights[weight_name[index+2]],
-		offsets[offset_name[index]], offsets[offset_name[index+1]], offsets[offset_name[index+2]], 
-		scales[scall_name[index]], scales[scall_name[index+1]], scales[scall_name[index+2]])	
-	
-	s=2	
-	c = IncreaseResNet(c, s, 
-	weights[weight_name[90]], weights[weight_name[91]], weights[weight_name[92]],
-	offsets[offset_name[90]], offsets[offset_name[91]], offsets[offset_name[92]], 
-	scales[scall_name[90]], scales[scall_name[91]], scales[scall_name[92]], 
-	weight = weight_re['w3'])	
-	
-	s=1
-	for index in range(93,99,3):
-		c = ResNet(c, s, 
-		weights[weight_name[index]], weights[weight_name[index+1]], weights[weight_name[index+2]],
-		offsets[offset_name[index]], offsets[offset_name[index+1]], offsets[offset_name[index+2]], 
-		scales[scall_name[index]], scales[scall_name[index+1]], scales[scall_name[index+2]])
+		weights[index], weights[index+1], weights[index+2],
+		offsets[index], offsets[index+1], offsets[index+2], 
+		scales[index], scales[index+1], scales[index+2])
 		
+	return c
+	
+def model(x, weight, offsets, scales):
+	index = 0
+	index_re = 0
+	x = tf.reshape(x, [-1, img_size, img_size, 3])
+
+	s = 2
+	c = Cov(x, s , weights[index], offsets[index], scales[index]) #112,64
+	index+=1
+	c = tf.nn.max_pool(c, ksize =[1,3,3,1], strides= [1,2,2,1], padding="SAME") #56,64
+	
+	#Cov_2
+	f_index=index+9
+	s = 1
+	c = ConvBlock(c, s, index, f_index, index_re, weights, offsets, scales, weight_re)
+	index_re+=1	
+	index+=9
+	
+	#Cov_3
+	f_index=index+12
+	s = 2
+	c = ConvBlock(c, s, index, f_index, index_re, weights, offsets, scales, weight_re)
+	index_re+=1	
+	index+=12
+	
+	#Cov_4
+	f_index=index+69
+	c = ConvBlock(c, s, index, f_index, index_re, weights, offsets, scales, weight_re)
+	index_re+=1	
+	index+=69		
+	
+	#Cov_5
+	f_index=index+9
+	c = ConvBlock(c, s, index, f_index, index_re, weights, offsets, scales, weight_re)
+	
 	avg = tf.nn.avg_pool(c, ksize = [1,2,2,1], strides = [1,1,1,1], padding = "SAME")
-	fc_input = tf.reshape(avg, [-1,100352])
+	fc_input = tf.reshape(avg, [-1,all_node])
 	fc_output = tf.matmul(fc_input, weight_fc)
 	return tf.matmul(fc_output, weight_output)
-
