@@ -1,84 +1,121 @@
 import tensorflow as tf
+import numpy as np
 
-all_node = 100352
 img_size = 224
-batch_size = 256
-output_size = 1
-input_data = tf.placeholder("float", [batch_size, img_size*img_size*3])
+batch_size = 2
+output_size = 10
+img_channel = 3
+input_data = tf.placeholder("float", [batch_size, img_size*img_size*img_channel], name="input_data")
 label = ("float", [batch_size, output_size])
 
-def Cov(x, s, weight, _offset, _scale):
-	h = tf.nn.conv2d(x, weight, strides = [1, s, s,1], padding = "SAME")
-	h_mean , h_var= tf.nn.moments(h, 0)
-	h = tf.nn.batch_normalization(h, h_mean, h_var, _offset, _scale, variance_epsilon=0.001, name=None)
-	return tf.nn.relu(h)
+def ConvBase(x, s, weight_shape, BN_shape, name = "conv"):
+	w_std = 1/(2*weight_shape[0]*weight_shape[1]*weight_shape[3])
+	BN_std = 1/(2*BN_shape[0]*BN_shape[1]*BN_shape[2])
+	with tf.name_scope(name):
+		with tf.name_scope("conv"):
+			weight = tf.Variable(tf.random_normal(weight_shape,stddev=w_std), name="weight")
+			h = tf.nn.conv2d(x, weight, strides = [1, s, s,1], padding = "SAME")
+			
+		with tf.name_scope("BN"):
+			offse = tf.Variable(tf.random_normal(BN_shape,stddev=BN_std), name="offse")
+			scale = tf.Variable(tf.random_normal(BN_shape,stddev=BN_std, name="scale"))
+			h_mean , h_var= tf.nn.moments(h, 0)
+			h = tf.nn.batch_normalization(h, h_mean, h_var, offse, scale, variance_epsilon=0.001, name=None)
+		return tf.nn.relu(h)
 
-def ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3):
-	h1 = Cov(x, s, weight1, _offset1, _scale1)
-	s = 1
-	h2 = Cov(h1, s, weight2, _offset2, _scale2)
-	return Cov(h2, s, weight3, _offset3, _scale3)
+def Conv(x, conv_size, input_channel, output_channel, img_size, s=1, name = "conv"):
+	weight_shape = [conv_size,conv_size,input_channel,output_channel]
+	BN_shape = [img_size,img_size,output_channel]
+	return ConvBase(x, s, weight_shape, BN_shape, name)
 	
-def IncreaseResNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3, weight):
-	r = ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3)
-	x = tf.nn.conv2d(x, weight, strides = [1,s,s,1], padding = "SAME")
-	return r+x
-
-def ResNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3):
-	r = ConvNet(x, s, weight1, weight2, weight3, _offset1, _offset2, _offset3, _scale1, _scale2, _scale3)
-	return r+x	
-	
-def ConvBlock(x, s, i_index, f_index, index_re, weights, offsets, scales, weight_re):
-	c = IncreaseResNet(x, s, 
-	weights[i_index], weights[i_index+1], weights[i_index+2],
-	offsets[i_index], offsets[i_index+1], offsets[i_index+2],
-	scales[i_index], scales[i_index+1], scales[i_index+2], 	
-	weight = weight_re[index_re])	
-	
-	s = 1
-	for index in range(i_index+3,f_index,3):
-		c = ResNet(c, s,
-		weights[index], weights[index+1], weights[index+2],
-		offsets[index], offsets[index+1], offsets[index+2], 
-		scales[index], scales[index+1], scales[index+2])
 		
-	return c
-	
-def model(x, weight, offsets, scales):
-	index = 0
-	index_re = 0
-	x = tf.reshape(x, [-1, img_size, img_size, 3])
+def ConvNet(x, s, input_channel, output_channel, img_size):
+	h1 = Conv(x, 1, input_channel, output_channel, img_size, s, name = "conv1")
+	h2 = Conv(h1, 3, h1.get_shape().as_list()[-1], output_channel, img_size, 1, name = "conv2")
+	return Conv(h2, 1, h2.get_shape().as_list()[-1], 4*output_channel, img_size, 1, name = "conv3")
 
-	s = 2
-	c = Cov(x, s , weights[index], offsets[index], scales[index]) #112,64
-	index+=1
-	c = tf.nn.max_pool(c, ksize =[1,3,3,1], strides= [1,2,2,1], padding="SAME") #56,64
+def ResNet(x, s, input_channel, output_channel, img_size, name="resnet"):
+	with tf.name_scope(name):
+		r = ConvNet(x, s, input_channel, output_channel, img_size)
+		if x.get_shape().as_list()[1]!=r.get_shape().as_list()[1] or x.get_shape().as_list()[-1]!=r.get_shape().as_list()[-1]:
+			r_s = x.get_shape().as_list()[1]/r.get_shape().as_list()[1]
+			shape = [1, 1, x.get_shape().as_list()[-1], r.get_shape().as_list()[-1]]
+			w_std = 1/(2*shape[3])
+			with tf.name_scope("reshape"):
+				w = tf.Variable(tf.random_normal(shape, stddev=w_std), name="weight")
+				x = tf.nn.conv2d(x, w, strides = [1,r_s,r_s,1], padding = "SAME")
+		return r+x	
+	
+def model(x, img_size, img_channel):
+
+	x = tf.reshape(x, [-1, img_size, img_size, img_channel])
+	
+	with tf.name_scope("Block1"):	
+		c = ConvBase(x, 2, [7, 7, x.get_shape().as_list()[-1], 64], [112,112,64], name = "conv1") 
+	img_size=112
 	
 	#Cov_2
-	f_index=index+9
-	s = 1
-	c = ConvBlock(c, s, index, f_index, index_re, weights, offsets, scales, weight_re)
-	index_re+=1	
-	index+=9
+	with tf.name_scope("Block2"):
+		c = tf.nn.max_pool(c, ksize =[1,3,3,1], strides= [1,2,2,1], padding="SAME")
+		img_size=56
+		
+		output_channel=64
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet1")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet2")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet3")		
 	
 	#Cov_3
-	f_index=index+12
-	s = 2
-	c = ConvBlock(c, s, index, f_index, index_re, weights, offsets, scales, weight_re)
-	index_re+=1	
-	index+=12
+	with tf.name_scope("Block3"):
+		output_channel=128
+		img_size=28 
+		c = ResNet(c, 2, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet1")     
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet2")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet3")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet4")
 	
 	#Cov_4
-	f_index=index+69
-	c = ConvBlock(c, s, index, f_index, index_re, weights, offsets, scales, weight_re)
-	index_re+=1	
-	index+=69		
-	
+	with tf.name_scope("Block4"):
+		output_channel=256
+		img_size=14
+		c = ResNet(c, 2, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet1")     
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet2")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet3")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet4")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet5")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet6")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet7")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet8")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet9")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet10")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet11")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet12")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet13")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet14")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet15")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet16")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet17")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet18")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet19")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet20")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet21")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet22")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet23")
+
 	#Cov_5
-	f_index=index+9
-	c = ConvBlock(c, s, index, f_index, index_re, weights, offsets, scales, weight_re)
+	with tf.name_scope("Block5"):
+		output_channel=512
+		img_size=7
+		c = ResNet(c, 2, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet1")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet2")
+		c = ResNet(c, 1, c.get_shape().as_list()[-1], output_channel, img_size, name="resnet3")
 	
 	avg = tf.nn.avg_pool(c, ksize = [1,2,2,1], strides = [1,1,1,1], padding = "SAME")
-	fc_input = tf.reshape(avg, [-1,all_node])
-	fc_output = tf.matmul(fc_input, weight_fc)
-	return tf.matmul(fc_output, weight_output)
+	
+	fc_size = 1000
+	fc_input_size =c.get_shape().as_list()[1]*c.get_shape().as_list()[1]*c.get_shape().as_list()[-1]
+	with tf.name_scope("fc"):
+		fc_input = tf.reshape(avg, [-1, fc_input_size])
+		weight_fc= tf.Variable(tf.random_normal([fc_input_size, fc_size],stddev=1/(2*fc_size*fc_input_size), name="weight_fc"))
+		weight_output= tf.Variable(tf.random_normal([fc_size,output_size],stddev=1/(2*fc_size*output_size)), name="weight_output")	
+		fc_output = tf.matmul(fc_input, weight_fc)
+		return tf.matmul(fc_output, weight_output)
